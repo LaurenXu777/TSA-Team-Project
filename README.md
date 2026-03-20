@@ -10,7 +10,7 @@ This topic was chosen because geopolitical conflicts create significant uncertai
 ## Team Members
 
 <Lauren Shohan, Master of Environmental Management student at Duke University, lauren.shohan@duke.edu;
-Lauren Xu, Master of Environmental Management student at Duke University, ruoran.xu@duke.edu；
+Lauren Xu, Master of Environmental Management student at Duke University, ruoran.xu@duke.edu;
 Yeeun Kim, Master of Environmental Management student at Duke University, yeeun.kim@duke.edu;
 Saemin Kim, Master of Public Policy student at Duke University, saemin.kim@duke.edu>
 
