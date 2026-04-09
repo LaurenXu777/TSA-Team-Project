@@ -1,0 +1,71 @@
+---
+title: "Forecasting U.S. Gasoline Prices under Geopolitical Shocks"
+author: "Team ShohanXuKimKim"
+date: 04-15-2026
+format: 
+  html:
+    toc: true
+    theme: cosmo
+execute:
+  warning: false
+  message: false
+editor: visual
+---
+
+## 1. Project Overview
+
+We want to analyze how major geopolitical shocks affect U.S. gasoline prices and compare different time series models to see which performs best under these conditions.
+
+-   **Russia–Ukraine War** (Feb 2022)
+-   **Israel–Iran Conflict** (June 2025)
+-   **US Intervention in Venezuela** (Jan 2026)
+
+## 2. Data Loading & Cleaning
+
+Here we load the raw datasets (Gas prices, WTI prices, and Gas stocks) from the local folder and handle missing values and outliers.
+
+```{r}
+# Load required packages
+library(tidyverse)
+library(lubridate)
+library(timetk)
+
+# Read Data from Local 'Raw_Data' Folder
+gas_price_df <- read_csv("Raw_Data/Weekly U.S. Gas Price (EIA).csv", skip = 4) %>%
+  rename(date = 1, gas_price = 2) %>% mutate(date = mdy(date))
+
+wti_price_df <- read_csv("Raw_Data/Weekly WTI Price (EIA).csv", skip = 4) %>%
+  rename(date = 1, wti_price = 2) %>% mutate(date = mdy(date))
+
+gas_stocks_df <- read_csv("Raw_Data/Weekly U.S. Gas Stocks (EIA).csv", skip = 4) %>%
+  rename(date = 1, gas_stocks = 2) %>% mutate(date = mdy(date))
+
+# Merge and Clean Data
+clean_data <- gas_price_df %>%
+  left_join(wti_price_df, by = "date") %>%
+  left_join(gas_stocks_df, by = "date") %>%
+  arrange(date) %>%
+  filter(date >= as.Date("2018-01-01")) %>%
+  mutate(
+    gas_price = ts_clean_vec(ts_impute_vec(gas_price, period = 1), period = 1),
+    wti_price = ts_clean_vec(ts_impute_vec(wti_price, period = 1), period = 1),
+    gas_stocks = ts_clean_vec(ts_impute_vec(gas_stocks, period = 1), period = 1)
+  )
+
+# Preview the cleaned data
+head(clean_data)
+```
+
+
+## 3. Exploratory Data Analysis (EDA)
+
+And we visualize the cleaned gasoline prices.
+
+```{r}
+# Plot the target variable
+clean_data %>%
+  plot_time_series(date, gas_price, 
+                   .interactive = TRUE, 
+                   .title = "Cleaned U.S. Gasoline Prices")
+```
+
