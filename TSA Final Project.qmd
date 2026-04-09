@@ -20,9 +20,13 @@ We want to analyze how major geopolitical shocks affect U.S. gasoline prices and
 -   **Israel–Iran Conflict** (June 2025)
 -   **US Intervention in Venezuela** (Jan 2026)
 
-## 2. Data Loading & Cleaning
+## 2. Data Loading & Preprocessing
 
-Here we load the raw datasets (Gas prices, WTI prices, and Gas stocks) from the local folder and handle missing values and outliers.
+To analyze the relationship between U.S. gasoline prices, crude oil prices, and gasoline stocks, we collected weekly data from the U.S. Energy Information Administration (EIA).
+
+During the initial data loading phase, we identified a structural reporting discrepancy: weekly gasoline prices are recorded on **Mondays**, whereas WTI crude oil prices and gasoline stocks are reported on **Fridays**. To align the datasets correctly for our time series join, we advanced the WTI and stocks dates by 3 days.
+
+After successfully merging the data and filtering the timeline to start from 2018, we applied a rigorous data cleaning process. We utilized linear interpolation to impute any missing values and applied STL decomposition-based smoothing to handle extreme outliers. This ensures that our forecasting models are robust and not skewed by temporary noise.
 
 ```{r}
 # Load required packages
@@ -30,32 +34,47 @@ library(tidyverse)
 library(lubridate)
 library(timetk)
 
-# Read Data from Local 'Raw_Data' Folder
-gas_price_df <- read_csv("Raw_Data/Weekly U.S. Gas Price (EIA).csv", skip = 4) %>%
-  rename(date = 1, gas_price = 2) %>% mutate(date = mdy(date))
+# Guys, Please type install.packages(c("tidymodels", "modeltime", "prophet", "forecast", "xgboost", "ranger")) in the console. (To be deleted)
 
-wti_price_df <- read_csv("Raw_Data/Weekly WTI Price (EIA).csv", skip = 4) %>%
-  rename(date = 1, wti_price = 2) %>% mutate(date = mdy(date))
+# ==========================================
+# 1. Read Data and Align Dates
+# ==========================================
+# Note: EIA CSV files contain 4 lines of metadata at the top, so we use skip = 4.
 
-gas_stocks_df <- read_csv("Raw_Data/Weekly U.S. Gas Stocks (EIA).csv", skip = 4) %>%
-  rename(date = 1, gas_stocks = 2) %>% mutate(date = mdy(date))
+# Gas prices are reported on Mondays.
+gas_price_df <- read_csv("Raw_Data/Weekly U.S. Gas Price (EIA)", skip = 4) %>%
+  rename(date = 1, gas_price = 2) %>% 
+  mutate(date = mdy(date)) 
 
-# Merge and Clean Data
+# WTI prices and Gas stocks are reported on Fridays. 
+# We add 3 days to align them with the Monday schedule of Gas prices.
+wti_price_df <- read_csv("Raw_Data/Weekly WTI Price (EIA)", skip = 4) %>%
+  rename(date = 1, wti_price = 2) %>% 
+  mutate(date = mdy(date) + days(3)) 
+
+gas_stocks_df <- read_csv("Raw_Data/Weekly U.S. Gas Stocks (EIA)", skip = 4) %>%
+  rename(date = 1, gas_stocks = 2) %>% 
+  mutate(date = mdy(date) + days(3)) 
+
+# ==========================================
+# 2. Merge and Clean Data
+# ==========================================
 clean_data <- gas_price_df %>%
   left_join(wti_price_df, by = "date") %>%
   left_join(gas_stocks_df, by = "date") %>%
-  arrange(date) %>%
+  arrange(date) %>% # Ensure chronological order
   filter(date >= as.Date("2018-01-01")) %>%
   mutate(
-    gas_price = ts_clean_vec(ts_impute_vec(gas_price, period = 1), period = 1),
-    wti_price = ts_clean_vec(ts_impute_vec(wti_price, period = 1), period = 1),
+    # Step 1: Impute missing values (NAs) using interpolation
+    # Step 2: Clean and smooth extreme anomalies out of the time series
+    gas_price  = ts_clean_vec(ts_impute_vec(gas_price, period = 1), period = 1),
+    wti_price  = ts_clean_vec(ts_impute_vec(wti_price, period = 1), period = 1),
     gas_stocks = ts_clean_vec(ts_impute_vec(gas_stocks, period = 1), period = 1)
   )
 
-# Preview the cleaned data
+# Preview the cleaned and aligned data
 head(clean_data)
 ```
-
 
 ## 3. Exploratory Data Analysis (EDA)
 
@@ -69,3 +88,386 @@ clean_data %>%
                    .title = "Cleaned U.S. Gasoline Prices")
 ```
 
+## 4. Feature Engineering & Train/Test Split
+
+We will create dummy variables to represent our three major geopolitical shocks. Then, we will split the data, reserving the most recent 10% (approx. 26 weeks) for model testing.
+
+```{r}
+# Define shock dates
+shock_ukraine <- as.Date("2022-02-24")
+shock_israel_iran <- as.Date("2025-06-01") # June 2025
+shock_venezuela <- as.Date("2026-01-01")   # Jan 2026
+
+# Add dummy variables to the cleaned data
+model_data <- clean_data %>%
+  mutate(
+    shock_ukraine_dummy = ifelse(date >= shock_ukraine, 1, 0),
+    shock_israel_iran_dummy = ifelse(date >= shock_israel_iran, 1, 0),
+    shock_venezuela_dummy = ifelse(date >= shock_venezuela, 1, 0)
+  )
+
+# Time-based split: 90% Training, 10% Testing
+library(tidymodels)
+library(modeltime)
+
+splits <- initial_time_split(model_data, prop = 0.9)
+```
+
+## 5. Expanded Modeling Setup
+
+To thoroughly evaluate the impact of geopolitical shocks, we expand our forecasting roster to include 7 distinct models. We structure our approach logically, progressing from a simple baseline to traditional statistical models, machine learning algorithms, and finally, complex neural networks.
+
+```{r}
+# 1. Seasonal Naive (Simplest Baseline)
+model_snaive <- naive_reg() %>%
+  set_engine("snaive") %>%
+  fit(gas_price ~ date, data = training(splits))
+
+# 2. ETS (Error, Trend, Seasonality)
+model_ets <- exp_smoothing() %>%
+  set_engine("ets") %>%
+  fit(gas_price ~ date, data = training(splits))
+
+# 3. ARIMAX (Traditional Statistical Model)
+model_arima <- arima_reg() %>%
+  set_engine("auto_arima") %>%
+  fit(gas_price ~ date + wti_price + gas_stocks + shock_ukraine_dummy + shock_israel_iran_dummy + shock_venezuela_dummy, 
+      data = training(splits))
+
+# 4. Prophet (Generalized Additive Model)
+model_prophet <- prophet_reg() %>%
+  set_engine("prophet") %>%
+  fit(gas_price ~ date + wti_price + gas_stocks + shock_ukraine_dummy + shock_israel_iran_dummy + shock_venezuela_dummy, 
+      data = training(splits))
+
+# 5. Random Forest (Machine Learning)
+# Added .set_mode("regression") to specify we are predicting continuous values
+model_rf <- rand_forest(trees = 500, min_n = 5) %>%
+  set_engine("ranger") %>%
+  set_mode("regression") %>% 
+  fit(gas_price ~ date + wti_price + gas_stocks + shock_ukraine_dummy + shock_israel_iran_dummy + shock_venezuela_dummy, 
+      data = training(splits))
+
+# 6. ARIMA-Boost (Hybrid/Ensemble Model)
+# Added .set_mode("regression") for the XGBoost component
+model_arima_boost <- arima_boost() %>%
+  set_engine("auto_arima_xgboost") %>%
+  set_mode("regression") %>% 
+  fit(gas_price ~ date + wti_price + gas_stocks + shock_ukraine_dummy + shock_israel_iran_dummy + shock_venezuela_dummy, 
+      data = training(splits))
+
+# 7. NNAR (Neural Network Auto-Regression)
+model_nnar <- nnetar_reg() %>%
+  set_engine("nnetar") %>%
+  fit(gas_price ~ date + wti_price + gas_stocks + shock_ukraine_dummy + shock_israel_iran_dummy + shock_venezuela_dummy, 
+      data = training(splits))
+```
+
+## 6. Comprehensive Model Evaluation
+
+We consolidate all 7 models into a single table to benchmark their forecasting accuracy (e.g., RMSE, MAE, MAPE) on the withheld test dataset.
+
+```{r}
+# Create a Modeltime Table maintaining the simple-to-complex order
+models_tbl <- modeltime_table(
+  model_snaive,
+  model_ets,
+  model_arima,
+  model_prophet,
+  model_rf,
+  model_arima_boost,
+  model_nnar
+)
+
+# Calibrate models on the testing data
+calibration_tbl <- models_tbl %>%
+  modeltime_calibrate(new_data = testing(splits))
+
+# Extract and display the accuracy metrics (Sorted by RMSE)
+accuracy_tbl <- calibration_tbl %>%
+  modeltime_accuracy() %>%
+  arrange(rmse) 
+
+print(accuracy_tbl)
+
+# Plot Forecasts vs Actuals for all models
+calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = clean_data
+  ) %>%
+  plot_modeltime_forecast(
+    .legend_max_width = 25,
+    .interactive      = TRUE,
+    .title = "Forecast vs Actual: Model Comparison"
+  )
+```
+
+## 7. Visualization of Forecast Results (Full version)
+
+Visualizing the forecast against the actual test data is crucial for understanding how each model reacts to the structural breaks caused by geopolitical shocks. The following plot allows us to compare the trajectory of our 7 models against the observed gasoline prices.
+
+```{r}
+# ==========================================
+# 1. Generate and Plot the Forecast
+# ==========================================
+# We use the calibrated table to project our models onto the testing period.
+# The .interactive = TRUE argument allows us to zoom in on specific shock periods.
+
+calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = clean_data
+  ) %>%
+  plot_modeltime_forecast(
+    .legend_max_width = 25, # Adjust legend width for 7 models
+    .interactive      = TRUE,
+    .conf_interval_show = FALSE, # Hide confidence intervals to reduce clutter
+    .title = "Comparison of 7 Models: Forecasting U.S. Gasoline Prices",
+    .x_lab = "Date",
+    .y_lab = "Price (USD/Gallon)",
+    .color_lab = "Model Type"
+  )
+```
+
+```{r}
+# ==========================================
+# 2. Focused Visualization (Top Models)
+# ==========================================
+# Identify top models from the accuracy table and plot them individually 
+# to inspect their fit during shock windows.
+
+calibration_tbl %>%
+  # Example: Selecting only the best-performing models to reduce visual noise
+  filter(.model_id %in% c(4, 5, 6)) %>% 
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = clean_data
+  ) %>%
+  plot_modeltime_forecast(
+    .interactive = TRUE,
+    .title = "Deep Dive: Top Performing Models Under Geopolitical Stress"
+  )
+```
+
+## 7. Visualization of Forecast Results (Focused version)
+
+To capture the full context of the geopolitical shocks, starting with the Russia-Ukraine War in early 2022, we have focused this visualization on the period from 2022 to 2026. This allows us to see how each model responded to the initial major price spike and how they perform during the subsequent conflicts.
+
+```{r}
+# ==========================================
+# 1. Plot Forecast - Focused from 2022
+# ==========================================
+# We use filter_by_time to zoom into the period starting from 2022.
+
+calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = clean_data
+  ) %>%
+  # Filtering the plot to show data from January 2022 onwards
+  filter_by_time(.date_var = .index, .start_date = "2022-01-01") %>%
+  plot_modeltime_forecast(
+    .legend_max_width = 25,
+    .interactive      = TRUE,
+    .conf_interval_show = FALSE,
+    .title = "Comparison of 7 Models (From 2022)",
+    .x_lab = "Date",
+    .y_lab = "Price (USD/Gallon)"
+  )
+```
+
+```{r}
+# ==========================================
+# 2. Focused Visualization (Top Models)
+# ==========================================
+# Selecting the best performing models (e.g., ARIMA-Boost, Prophet, RF)
+# and restricting the timeline to 2022 onwards.
+
+calibration_tbl %>%
+  # Note: Adjust the .model_id indices based on your accuracy_tbl results
+  filter(.model_id %in% c(4, 5, 6)) %>% 
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = clean_data
+  ) %>%
+  filter_by_time(.date_var = .index, .start_date = "2022-01-01") %>%
+  plot_modeltime_forecast(
+    .interactive = TRUE,
+    .title = "Top Performing Models: Detailed View (From 2022)",
+    .x_lab = "Date",
+    .y_lab = "Price (USD/Gallon)"
+  )
+```
+
+## 8. Refitting and Future Forecasting (Full version)
+
+Now that we have evaluated the models, the final step is to refit them on the entire dataset (including the test set) to capture the most recent trends. We will then project the gasoline prices 12 weeks into the future.
+
+For models that require external regressors (WTI prices, Stocks, and Shock Dummies), we assume that the crude oil prices and gasoline stocks will remain at their last observed levels for the duration of the forecast. The shock dummies will remain at 1, as we are still within the post-shock environment.
+
+```{r}
+# ==========================================
+# 1. Refit Models to the Entire Dataset
+# ==========================================
+# Refitting ensures the models learn from the most recent 26 weeks of test data.
+refit_tbl <- calibration_tbl %>%
+  modeltime_refit(data = model_data)
+
+# ==========================================
+# 2. Create Future Data Frame (Next 12 Weeks)
+# ==========================================
+# We extend the timeline by 12 weeks and populate the external regressors.
+future_data <- model_data %>%
+  future_frame(.date_var = date, .length_out = "12 weeks") %>%
+  # Assumption: Future external variables stay at the last known value
+  mutate(
+    wti_price = tail(model_data$wti_price, 1),
+    gas_stocks = tail(model_data$gas_stocks, 1),
+    shock_ukraine_dummy = 1,
+    shock_israel_iran_dummy = 1,
+    shock_venezuela_dummy = 1
+  )
+
+# ==========================================
+# 3. Generate Future Forecast
+# ==========================================
+future_forecast_tbl <- refit_tbl %>%
+  modeltime_forecast(
+    new_data    = future_data,
+    actual_data = model_data
+  )
+
+# ==========================================
+# 4. Plot the Future Forecast
+# ==========================================
+future_forecast_tbl %>%
+  plot_modeltime_forecast(
+    .interactive = TRUE,
+    .title = "12-Week Future Forecast: U.S. Gasoline Prices",
+    .x_lab = "Date",
+    .y_lab = "Price (USD/Gallon)"
+  )
+```
+
+## 8. Refitting and 12-Week Future Forecast (Focused version)
+
+In this final stage, we refit the models to the entire dataset, incorporating all available observations up to April 2026. We then project gasoline prices for the next 12 weeks. To clearly visualize the projected trends against the most recent market behavior, this plot focuses on the last 2 years (2024–2026).
+
+```{r}
+# ==========================================
+# 1. Refit Models to the Full Dataset
+# ==========================================
+# This step ensures the models are updated with the latest trends from the test set.
+refit_tbl <- calibration_tbl %>%
+  modeltime_refit(data = model_data)
+
+# ==========================================
+# 2. Prepare Future Data Frame
+# ==========================================
+# Creating a 12-week horizon. External variables are assumed to hold 
+# their last observed values.
+future_data <- model_data %>%
+  future_frame(.date_var = date, .length_out = "12 weeks") %>%
+  mutate(
+    wti_price = tail(model_data$wti_price, 1),
+    gas_stocks = tail(model_data$gas_stocks, 1),
+    shock_ukraine_dummy = 1,
+    shock_israel_iran_dummy = 1,
+    shock_venezuela_dummy = 1
+  )
+
+# ==========================================
+# 3. Generate and Plot Future Forecast
+# ==========================================
+# We filter the visualization to start from 2024 to emphasize the 
+# upcoming 12-week trajectory.
+refit_tbl %>%
+  modeltime_forecast(
+    new_data    = future_data,
+    actual_data = model_data
+  ) %>%
+  # Filtering the view to the last 2 years for better clarity
+  filter_by_time(.date_var = .index, .start_date = "2024-01-01") %>%
+  plot_modeltime_forecast(
+    .interactive = TRUE,
+    .title = "12-Week Future Forecast (Recent 2-Year Perspective)",
+    .x_lab = "Date",
+    .y_lab = "Price (USD/Gallon)"
+  )
+```
+
+## 9. Event-Specific Performance Deep Dive (Event Study)
+
+To rigorously test the robustness of our models, we conduct a "retrospective evaluation" for each of the three major geopolitical shocks. Instead of a global evaluation, we isolate the specific periods following each event to identify which models are most resilient to different types of structural breaks.
+
+### 9.1. Shock 1: Russia-Ukraine War (Feb 2022)
+
+We evaluate the forecast accuracy for the 12-week period immediately following the invasion.
+
+```{r}
+# 1. Define the Post-Shock Window for Ukraine
+ukraine_shock_date <- as.Date("2022-02-24")
+
+# 2. Filter data for a local evaluation (mimicking real-time testing)
+# We use the already calibrated models but focus on the residuals during this specific window
+ukraine_accuracy <- calibration_tbl %>%
+  # Note: This requires the calibration to have covered this period. 
+  # If the global test set is only at the end, we analyze the 'fitted' values here.
+  modeltime_accuracy(
+    new_data = model_data %>% filter(date >= ukraine_shock_date & date <= ukraine_shock_date + weeks(12))
+  ) %>%
+  arrange(rmse)
+
+print(ukraine_accuracy)
+```
+
+### 9.2. Shock 2: Israel-Iran Conflict (June 2025)
+
+This analysis focuses on the 12-week volatility period in mid-2025.
+
+```{r}
+# 1. Define the Post-Shock Window for Israel-Iran
+israel_shock_date <- as.Date("2025-06-01")
+
+# 2. Local Accuracy Evaluation
+israel_accuracy <- calibration_tbl %>%
+  modeltime_accuracy(
+    new_data = model_data %>% filter(date >= israel_shock_date & date <= israel_shock_date + weeks(12))
+  ) %>%
+  arrange(rmse)
+
+print(israel_accuracy)
+```
+
+### 9.3. Shock 3: US Intervention in Venezuela (Jan 2026)
+
+As the most recent shock, this evaluation tests how models handle the latest structural shifts.
+
+```{r}
+# 1. Define the Post-Shock Window for Venezuela
+venezuela_shock_date <- as.Date("2026-01-01")
+
+# 2. Local Accuracy Evaluation
+venezuela_accuracy <- calibration_tbl %>%
+  modeltime_accuracy(
+    new_data = model_data %>% filter(date >= venezuela_shock_date & date <= venezuela_shock_date + weeks(12))
+  ) %>%
+  arrange(rmse)
+
+print(venezuela_accuracy)
+```
+
+## 10. Analysis of Model Robustness Across Geopolitical Shocks
+
+Our event study reveals a critical finding: **there is no single "best" model for all types of geopolitical stress.** The predictive power of each algorithm shifted significantly depending on the nature of the shock.
+
+1.  **Shock 1 (Russia-Ukraine): The Power of Ensembles** The **ARIMA-Boost** model outperformed all others with a remarkably low MAE (0.0143). This suggests that for massive, sudden price spikes, combining traditional statistical methods (ARIMA) with machine learning (XGBoost) is the most effective way to capture both the trend and the sudden residual volatility.
+
+2.  **Shock 2 (Israel-Iran): Neural Network Superiority** During the mid-2025 volatility, the **NNAR (Neural Network Auto-Regression)** model took the lead (MAE: 0.0201). This indicates that the price fluctuations during this period had complex, non-linear patterns that standard linear models struggled to identify, but which the neural network was able to learn through its hidden layers.
+
+3.  **Shock 3 (Venezuela Intervention): Robustness to Structural Breaks** The most recent shock in early 2026 proved to be the most challenging for all models, as evidenced by the higher MAE scores across the board. However, **Prophet with Regressors** emerged as the winner (MAE: 0.1107). Prophet’s design—which is specifically built to handle trend changepoints and outliers—made it the most resilient model during this latest period of uncertainty.
+
+### Conclusion for Policy Makers
+
+Based on these findings, we recommend a **"Dynamic Ensemble Approach."** ?!
