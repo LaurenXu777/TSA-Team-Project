@@ -136,9 +136,11 @@ clean_data %>%
 
 ## 4. Traditional ARIMA and SARIMA
 
-### 4.1. Univariate ARIMA
+In this section, we analyze the univariate time series of gasoline prices. We will contrast a standard ARIMA model applied to deseasonalized data with a Seasonal ARIMA (SARIMA) model applied to the original data, following traditional time series forecasting methodologies.
 
-we first analyze the univariate time series of gasoline prices. We will decompose the series, check for stationarity, manually test various $ARIMA(p,d,q)$ specifications, and select the optimal model based on the AIC criterion.
+### 4.1. Time Series Transformation and Decomposition
+
+We first convert our data into a time series object with a weekly frequency (52). Using STL decomposition, we separate the underlying trend from seasonal fluctuations.
 
 ```{r}
 # Load required traditional time series packages
@@ -146,207 +148,137 @@ library(forecast)
 library(tseries)
 library(cowplot)
 
-# ==========================================
-# 4.1 Transform to Time Series Object
-# ==========================================
-# Converting to a ts object. Assuming weekly data (frequency = 52).
+# Converting to a ts object (frequency = 52 for weekly data)
 ts_gas_price <- ts(clean_data$gas_price, start=c(2018, 1), frequency=52)
 
-# ==========================================
-# 4.2 Decompose and Remove Seasonality
-# ==========================================
-
+# Decompose and create a deseasonalized series
 decompose_gas <- decompose(ts_gas_price, "additive")
-plot(decompose_gas)
-
-# Create non-seasonal series for ARIMA fitting
 deseasonal_gas <- seasadj(decompose_gas)
 
 # Comparing ACFs: Original vs Deseasonalized
 plot_grid(
   autoplot(Acf(ts_gas_price, lag = 40, plot=FALSE), 
-           main = "Original Gas Price"),
+           main = "ACF: Original Gas Price"),
   autoplot(Acf(deseasonal_gas, lag = 40, plot=FALSE),  
-           main = "Deseasonalized Gas Price")
+           main = "ACF: Deseasonalized Gas Price"),
+  autoplot(Pacf(ts_gas_price, lag = 40, plot=FALSE),
+           main = "PACF: Original Gas Price"),
+  autoplot(Pacf(deseasonal_gas, lag = 40, plot=FALSE),  
+           main = "PACF: Deseasonalized Gas Price"),
+  nrow=2, ncol=2
 )
 ```
 
-### 4.2. Stationarity Test and Differencing
+### 4.2. Approach 1: ARIMA on Deseasonalized Data
 
-Before fitting, we use the Augmented Dickey-Fuller (ADF) test to verify stationarity.
+We first test the non-seasonal ARIMA approach. We check for stationarity using the Augmented Dickey-Fuller (ADF) test, apply differencing, and manually identify the p and q parameters.
 
-#### original gas price
-
-Since the ADF test p-value is larger than 0.05, we apply first differencing (d=1) and check ACF/PACF of differenced series. Since the graphy shows strong seasonality, we deseasonalize the data as a next step.
+**Stationarity & Visual Identification:** The ADF test suggests a stochastic trend, requiring first differencing (d=1). In the differenced plots, the PACF displays a sharp cut-off after Lag 1, while the ACF shows a gradual decay. This classic signature strongly suggests an ARIMA(1,1,0) specification.
 
 ```{r}
-# Run ADF Test
-print(adf.test(gas, alternative="stationary"))
-
-# If p-value > 0.05, it indicates a stochastic trend. We apply first differencing (d=1).
-gas_diff <- diff(gas, differences=1)
-
-# Check ACF/PACF of the differenced series to identify p and q
-
-plot_grid(
-  autoplot(Acf(gas_diff, lag = 40, plot=FALSE), 
-           main = "ACF: Differenced Series (original)"),
-  autoplot(Pacf(gas_diff, lag = 40, plot=FALSE),  
-           main = "PACF: Differenced Series (original)")
-)
-```
-
-#### deseasonalizaed gas price
-
-After applying first differencing (d=1) to achieve stationarity, we examine the ACF and PACF plots to identify the p and q parameters.
-
-The PACF plot displays a sharp cut-off after Lag 1, while the ACF plot shows a gradual decay (tailing off). In time series theory, this specific combination is the classic signature of an Autoregressive process of order 1, or AR(1). Therefore, the visual evidence strongly suggests an ARIMA(1,1,0) specification.
-
-```{r}
-# Run ADF Test
+# Run ADF Test on deseasonalized data
 print(adf.test(deseasonal_gas, alternative="stationary"))
 
-# If p-value > 0.05, it indicates a stochastic trend. We apply first differencing (d=1).
+# Apply first differencing (d=1)
 deseasonal_gas_diff <- diff(deseasonal_gas, differences=1)
 
-# Check ACF/PACF of the differenced series to identify p and q
-
+# Plot ACF/PACF of the differenced series
 plot_grid(
   autoplot(Acf(deseasonal_gas_diff, lag = 40, plot=FALSE), 
-           main = "ACF: Differenced Series (deseasonal)"),
+           main = "ACF: Differenced (Deseasonal)"),
   autoplot(Pacf(deseasonal_gas_diff, lag = 40, plot=FALSE),  
-           main = "PACF: Differenced Series (deseasonal)")
+           main = "PACF: Differenced (Deseasonal)")
 )
 ```
 
-### 4.3. Manual ARIMA Fitting & AIC Comparison
+#### Manual Fitting vs Auto ARIMA:
 
-We manually test several combinations of Autoregressive ($p$) and Moving Average ($q$) terms. To select the most robust model, we evaluate both the Akaike Information Criterion (AIC) and the Bayesian Information Criterion (BIC), which applies a stricter penalty for model complexity. The result shows that ARIMA(1,1,0) is the strongest model.
+We manually test several combinations and compare them against a strictly non-seasonal auto.arima() to find the mathematically optimal specification based on Information Criteria (AIC/BIC). The result of the auto ARIMA is ARIMA(1,1,0) (without drift–this is why the AIC/BIC is different from auto ARIMA and manually fitted ARIMA(1,1,0), which has a drift).
 
 ```{r}
-# Initialize an empty data frame to store AIC and BIC values
 compare_criteria <- data.frame(Model=character(), AIC=numeric(), BIC=numeric(), stringsAsFactors=FALSE)
 
-# Model 1: ARIMA(1,1,0)
+# Manual Models
 Model_110 <- Arima(deseasonal_gas, order=c(1,1,0), include.drift=TRUE)
-compare_criteria <- rbind(compare_criteria, data.frame(Model="ARIMA(1,1,0)", AIC=Model_110$aic, BIC=Model_110$bic))
-
-# Model 2: ARIMA(1,1,1)
 Model_111 <- Arima(deseasonal_gas, order=c(1,1,1), include.drift=TRUE)
-compare_criteria <- rbind(compare_criteria, data.frame(Model="ARIMA(1,1,1)", AIC=Model_111$aic, BIC=Model_111$bic))
-
-# Model 3: ARIMA(2,1,1)
 Model_211 <- Arima(deseasonal_gas, order=c(2,1,1), include.drift=TRUE)
-compare_criteria <- rbind(compare_criteria, data.frame(Model="ARIMA(2,1,1)", AIC=Model_211$aic, BIC=Model_211$bic))
-
-# Model 4: ARIMA(0,1,1)
 Model_011 <- Arima(deseasonal_gas, order=c(0,1,1), include.drift=TRUE)
-compare_criteria <- rbind(compare_criteria, data.frame(Model="ARIMA(0,1,1)", AIC=Model_011$aic, BIC=Model_011$bic))
 
-# Print manual comparisons sorted by AIC
-print(compare_criteria %>% arrange(AIC))
-```
+compare_criteria <- rbind(compare_criteria, 
+                          data.frame(Model="ARIMA(1,1,0)", AIC=Model_110$aic, BIC=Model_110$bic),
+                          data.frame(Model="ARIMA(1,1,1)", AIC=Model_111$aic, BIC=Model_111$bic),
+                          data.frame(Model="ARIMA(2,1,1)", AIC=Model_211$aic, BIC=Model_211$bic),
+                          data.frame(Model="ARIMA(0,1,1)", AIC=Model_011$aic, BIC=Model_011$bic))
 
-### 4.4. Auto ARIMA and Residual Diagnostics
-
-Finally, we use the auto.arima() algorithm to find the mathematically optimal specification and check its residuals for white noise using the Ljung-Box test. When we put deseasonal data into auto-fitting ARIMA model, the strongest model is ARIMA(1,1,0)(0,0,1)\[52\].
-
-```{r}
-# Auto-fitting ARIMA
-Model_autofit <- auto.arima(deseasonal_gas, approximation = TRUE)
-print(Model_autofit)
-
-# Add to comparison
-compare_criteria <- rbind(compare_criteria, data.frame(Model="Auto ARIMA", AIC=Model_autofit$aic, BIC=Model_autofit$bic))
-
-# Print final criteria table
-print(compare_criteria %>% arrange(AIC))
-
-# Check residuals for the best model
-checkresiduals(Model_autofit)
-```
-
-### 4.5. ARIMA vs SARIMA
-
-We analyze the univariate time series of gasoline prices. We will contrast a standard ARIMA model on deseasonalized data with a Seasonal ARIMA (SARIMA) model on the original data.
-
-#### Automated Differencing Tests (ndiffs & nsdiffs)
-
-Instead of relying solely on visual inspection, we utilize statistical tests to determine the required number of non-seasonal (d) and seasonal (D) differences.
-
-```{r}
-# Find non-seasonal differencing (trend)
-n_diff <- ndiffs(deseasonal_gas)
-cat("Number of non-seasonal differencing needed (d): ", n_diff, "\n")
-
-# Find seasonal differencing
-ns_diff <- nsdiffs(ts_gas_price)
-cat("Number of seasonal differencing needed (D): ", ns_diff, "\n")
-
-# Perform differencing based on test results (assuming d=1, D=1 for weekly seasonality)
-gas_trend_diff <- diff(ts_gas_price, lag=1, differences=1)
-gas_both_diff  <- diff(gas_trend_diff, lag=52, differences=1)
-```
-
-#### ACF/PACF of Twice-Differenced Series
-
-To identify the SARIMA orders (p,d,q)(P,D,Q)\[52\], we analyze the series that has been differenced for both trend and seasonality.
-
-Analyzing the twice-differenced series allows us to visually identify the autoregressive (AR) and moving average (MA) components.
-
-1.  Non-Seasonal Components (p,q): The PACF displays a sharp cut-off after the first lag, while the ACF exhibits a gradual, tailing-off decay over the initial lags. In time series theory, this pattern is the classic signature of an Autoregressive process. Thus, we identify p=1 and q=0.
-
-2.  Seasonal Components (P,Q): Observing the seasonal lags (multiples of 52), the PACF shows a distinct spike at Lag 52 and cuts off, whereas the ACF decays more slowly across the seasonal periods (Lag 52, 104). This implies a seasonal Autoregressive process. Thus, we identify P=1 and Q=0.
-
-Combining these observations with our known differencing orders (d=1,D=1), the visual evidence points us toward a SARIMA(1,1,0)(1,1,0)\[52\] specification.
-
-```{r}
-# Plot ACF and PACF for twice-differenced series
-plot_grid(
-  autoplot(Acf(gas_both_diff, lag.max=110, plot=FALSE), 
-           main="ACF: Twice-Differenced", ylim=c(-1,1)),
-  autoplot(Pacf(gas_both_diff, lag.max=110, plot=FALSE), 
-           main="PACF: Twice-Differenced", ylim=c(-1,1)),
-  nrow=1, ncol=2
-)
-```
-
-#### Automatically Fitting SARIMA (Original) vs ARIMA (Deseasonalized)
-
-We fit an automated SARIMA model to the original data to capture both dynamics simultaneously, and compare its residual performance against the non-seasonal ARIMA.
-
-```{r}
-# 1. SARIMA on Original Data
-SARIMA_autofit <- auto.arima(ts_gas_price)
-print(SARIMA_autofit)
-
-# 2. ARIMA on Deseasonalized Data
+# Strict Non-Seasonal Auto ARIMA (Don't find the seasonality! - just to compare with other models)
 ARIMA_autofit <- auto.arima(deseasonal_gas, max.D=0, max.P=0, max.Q=0)
 print(ARIMA_autofit)
 
-# Residual Comparison
+compare_criteria <- rbind(compare_criteria, 
+                          data.frame(Model="Auto ARIMA (Strict)", AIC=ARIMA_autofit$aic, BIC=ARIMA_autofit$bic))
+
+print(compare_criteria %>% arrange(AIC))
+```
+
+### 4.3. Approach 2: SARIMA on Original Data
+
+Next, we attempt to model the trend and seasonality simultaneously using the original data. We use ndiffs and nsdiffs to determine the differencing orders, followed by an analysis of the twice-differenced series.
+
+**Visual Identification for SARIMA:**
+
+Non-Seasonal (p,q): PACF cuts off after Lag 1, ACF decays →p=1,q=0.
+
+Seasonal (P,Q): PACF spikes at Lag 52 and cuts off, ACF decays across seasonal periods →P=1,Q=0. This points toward a SARIMA(1,1,0)(1,1,0)\[52\] specification.
+
+```{r}
+n_diff <- ndiffs(deseasonal_gas)
+ns_diff <- nsdiffs(ts_gas_price)
+cat("Required Differencing -> Non-seasonal (d):", n_diff, "| Seasonal (D):", ns_diff, "\n")
+
+# Twice-differenced series for SARIMA identification
+gas_trend_diff <- diff(ts_gas_price, lag=1, differences=1)
+gas_both_diff  <- diff(gas_trend_diff, lag=52, differences=1)
+
 plot_grid(
-  autoplot(Acf(SARIMA_autofit$residuals, lag.max=60, plot=FALSE), main="ACF: SARIMA Residuals"),
-  autoplot(Acf(ARIMA_autofit$residuals, lag.max=60, plot=FALSE), main="ACF: ARIMA Residuals"),
+  autoplot(Acf(gas_both_diff, lag.max=110, plot=FALSE), main="ACF: Twice-Differenced", ylim=c(-1,1)),
+  autoplot(Pacf(gas_both_diff, lag.max=110, plot=FALSE), main="PACF: Twice-Differenced", ylim=c(-1,1)),
   nrow=1, ncol=2
 )
 ```
 
-### 4.6 Methodological Insight: The Paradox of Auto-ARIMA Selection
+#### Auto SARIMA Fitting:
 
-Interestingly, auto.arima() selected a non-seasonal ARIMA(1,1,0) for the raw data, while selecting a seasonal ARIMA(1,1,0)(0,0,1)[52] for the deseasonalized data. This apparent paradox is a well-known phenomenon in high-frequency time series:
+We now allow the algorithm to freely fit the original data and compare its residual performance.
 
-In the raw data, the high variance and the massive AICc penalty associated with estimating 52-lag parameters outweighed the benefits of modeling seasonality, leading the algorithm to favor a simpler AR(1) process.
+```{r}
+# SARIMA on Original Data
+SARIMA_autofit <- auto.arima(ts_gas_price)
+print(SARIMA_autofit)
 
-Conversely, the decompose() function leaves behind faint residual seasonal autocorrelations. Because the overall variance was drastically reduced in the deseasonalized series, the algorithm detected this subtle "seasonal ghost" and efficiently captured it using a single seasonal moving average term (Q=1).
+# Unrestricted Auto ARIMA on Deseasonalized Data
+ARIMA_unrestricted <- auto.arima(deseasonal_gas, approximation = TRUE)
+print(ARIMA_unrestricted)
+```
 
-This highlights the limitations of traditional fixed decomposition and confirms our rationale for transitioning to machine learning models (like Prophet) that can handle complex, evolving weekly seasonality without incurring excessive parameter penalties.
+### 4.4. Methodological Insight: The Paradox of Auto-ARIMA Selection
+
+Comparing the automated results reveals a well-known paradox in high-frequency time series forecasting:
+
+-   Raw Data selected ARIMA(1,1,0): The high variance and the massive AICc penalty associated with estimating 52-lag parameters outweighed the mathematical benefits of modeling seasonality, leading the algorithm to favor a simpler AR(1) process and drop the seasonal terms entirely.
+
+-   Deseasonalized Data selected ARIMA(1,1,0)(0,0,1)\[52\]: Conversely, the decompose() function leaves behind faint residual seasonal autocorrelations. Because the overall variance was drastically reduced in the deseasonalized series, the algorithm detected this subtle "seasonal ghost" and efficiently captured it using a single seasonal moving average term (Q=1).
+
+Transition to Advanced Modeling: This paradox highlights the core limitation of traditional univariate ARIMA/SARIMA frameworks when dealing with high-frequency (weekly) data and geopolitical shocks. To properly capture evolving seasonality without incurring excessive parameter penalties—and to account for exogenous variables like WTI prices—we must transition to advanced Multivariate Machine Learning models (e.g., Prophet, XGBoost) in the subsequent sections.
 
 ## 5. Machine-learning Methods
 
 ### 5.1. Feature Engineering & Train/Test Split
 
 We will create dummy variables to represent our three major geopolitical shocks. Then, we will split the data, reserving the most recent 10% (approx. 26 weeks) for model testing.
+
+While traditional ARIMA and SARIMA effectively capture internal historical patterns, they are fundamentally "blind" to external structural breaks. Geopolitical crises, such as the Russia-Ukraine War or the Israel-Iran conflict, create massive exogenous shocks that distort univariate forecasts.
+
+To overcome this, we transition to Multivariate Machine Learning and ARIMAX frameworks. By incorporating WTI crude oil prices and gasoline stocks as continuous regressors, alongside binary dummy variables for specific geopolitical events, we allow the models to absorb non-linear structural breaks. These dummy variables act as mathematical "shock absorbers," shifting the baseline predictions during crisis periods and preventing the models from distorting the underlying economic relationships (e.g., the elasticity between WTI and gasoline).
 
 ```{r}
 # Define shock dates
@@ -516,20 +448,20 @@ To capture the full context of the geopolitical shocks, starting with the Russia
 # ==========================================
 # 1. Plot Forecast - Focused from 2022
 # ==========================================
-# We use filter_by_time to zoom into the period starting from 2022.
+# We use filter_by_time to zoom into the period starting from 2025.
 
 calibration_tbl %>%
   modeltime_forecast(
     new_data    = testing(splits),
     actual_data = clean_data
   ) %>%
-  # Filtering the plot to show data from January 2022 onwards
-  filter_by_time(.date_var = .index, .start_date = "2022-01-01") %>%
+  # Filtering the plot to show forecasted data 
+  filter_by_time(.date_var = .index, .start_date = "2025-01-06") %>%
   plot_modeltime_forecast(
     .legend_max_width = 25,
     .interactive      = TRUE,
     .conf_interval_show = FALSE,
-    .title = "Comparison of 7 Models (From 2022)",
+    .title = "Comparison of 7 Models",
     .x_lab = "Date",
     .y_lab = "Price (USD/Gallon)"
   )
@@ -540,7 +472,7 @@ calibration_tbl %>%
 # 2. Focused Visualization (Top Models)
 # ==========================================
 # Selecting the best performing models (e.g., ARIMA-Boost, Prophet, RF)
-# and restricting the timeline to 2022 onwards.
+# and restricting the timeline to 2025 onwards.
 
 calibration_tbl %>%
   # Note: Adjust the .model_id indices based on your accuracy_tbl results
@@ -549,10 +481,10 @@ calibration_tbl %>%
     new_data    = testing(splits),
     actual_data = clean_data
   ) %>%
-  filter_by_time(.date_var = .index, .start_date = "2022-01-01") %>%
+  filter_by_time(.date_var = .index, .start_date = "2025-01-06") %>%
   plot_modeltime_forecast(
     .interactive = TRUE,
-    .title = "Top Performing Models: Detailed View (From 2022)",
+    .title = "Top Performing Models: Detailed View",
     .x_lab = "Date",
     .y_lab = "Price (USD/Gallon)"
   )
@@ -610,7 +542,7 @@ future_forecast_tbl %>%
 
 ### 5.7. Refitting and 12-Week Future Forecast (Focused version)
 
-In this final stage, we refit the models to the entire dataset, incorporating all available observations up to April 2026. We then project gasoline prices for the next 12 weeks. To clearly visualize the projected trends against the most recent market behavior, this plot focuses on the last 2 years (2024–2026).
+In this final stage, we refit the models to the entire dataset, incorporating all available observations up to April 2026. We then project gasoline prices for the next 12 weeks. To clearly visualize the projected trends against the most recent market behavior, this plot focuses on data after 2026.
 
 ```{r}
 # ==========================================
@@ -638,18 +570,18 @@ future_data <- model_data %>%
 # ==========================================
 # 3. Generate and Plot Future Forecast
 # ==========================================
-# We filter the visualization to start from 2024 to emphasize the 
+# We filter the visualization to start from 2026 to emphasize the 
 # upcoming 12-week trajectory.
 refit_tbl %>%
   modeltime_forecast(
     new_data    = future_data,
     actual_data = model_data
   ) %>%
-  # Filtering the view to the last 2 years for better clarity
-  filter_by_time(.date_var = .index, .start_date = "2024-01-01") %>%
+  # Filtering the view from 2025 for better clarity
+  filter_by_time(.date_var = .index, .start_date = "2026-01-05") %>%
   plot_modeltime_forecast(
     .interactive = TRUE,
-    .title = "12-Week Future Forecast (Recent 2-Year Perspective)",
+    .title = "12-Week Future Forecast",
     .x_lab = "Date",
     .y_lab = "Price (USD/Gallon)"
   )
@@ -673,7 +605,7 @@ ukraine_accuracy <- calibration_tbl %>%
   # Note: This requires the calibration to have covered this period. 
   # If the global test set is only at the end, we analyze the 'fitted' values here.
   modeltime_accuracy(
-    new_data = model_data %>% filter(date >= ukraine_shock_date & date <= ukraine_shock_date + weeks(12))
+    new_data = model_data %>% filter(date >= ukraine_shock_date & date <= ukraine_shock_date + weeks(28)) # 28 weeks (long-term) of event window 
   ) %>%
   arrange(rmse)
 
@@ -691,7 +623,7 @@ israel_shock_date <- as.Date("2025-06-01")
 # 2. Local Accuracy Evaluation
 israel_accuracy <- calibration_tbl %>%
   modeltime_accuracy(
-    new_data = model_data %>% filter(date >= israel_shock_date & date <= israel_shock_date + weeks(12))
+    new_data = model_data %>% filter(date >= israel_shock_date & date <= israel_shock_date + weeks(4)) # 4 weeks (short-term) of event window 
   ) %>%
   arrange(rmse)
 
@@ -709,22 +641,124 @@ venezuela_shock_date <- as.Date("2026-01-01")
 # 2. Local Accuracy Evaluation
 venezuela_accuracy <- calibration_tbl %>%
   modeltime_accuracy(
-    new_data = model_data %>% filter(date >= venezuela_shock_date & date <= venezuela_shock_date + weeks(12))
+    new_data = model_data %>% filter(date >= venezuela_shock_date & date <= venezuela_shock_date + weeks(4)) # 4 weeks (short-term) of event window
   ) %>%
   arrange(rmse)
 
 print(venezuela_accuracy)
 ```
+### 6.4 Visualization
+
+The highlighted areas in the macro plot indicate our event-specific evaluation windows. Rather than applying a uniform timeframe, we dynamically calibrated the windows to reflect the actual duration of each macroeconomic shock. The Russia-Ukraine war is evaluated over a 28-week window to capture its prolonged structural impact on global supply chains. Conversely, the Israel-Iran and Venezuela events are evaluated over 4-week windows, accurately reflecting their nature as short-lived risk premium spikes.
+```{r}
+# Load necessary libraries for plotting
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+
+# 1. Define the 3 shock dates (adjust exact dates if needed)
+shock1_date <- as.Date("2022-02-24") # Russia-Ukraine
+shock2_date <- as.Date("2025-04-13") # Israel-Iran 
+shock3_date <- as.Date("2026-01-01") # Venezuela
+
+# 2. Create the Macro Event Study Plot with Dynamic Windows
+event_highlight_plot <- ggplot(clean_data, aes(x = date, y = gas_price)) +
+  geom_line(color = "black", linewidth = 0.7) +
+  
+  # Shock 1 Shading (28 Weeks: Massive Structural Break)
+  annotate("rect", xmin = shock1_date, xmax = shock1_date + weeks(28), 
+           ymin = -Inf, ymax = Inf, fill = "red", alpha = 0.2) +
+  
+  # Shock 2 Shading (4 Weeks: Short-term Risk Premium)
+  annotate("rect", xmin = shock2_date, xmax = shock2_date + weeks(4), 
+           ymin = -Inf, ymax = Inf, fill = "blue", alpha = 0.2) +
+  
+  # Shock 3 Shading (4 Weeks: Policy/Sanction Shift)
+  annotate("rect", xmin = shock3_date, xmax = shock3_date + weeks(4), 
+           ymin = -Inf, ymax = Inf, fill = "orange", alpha = 0.2) +
+  
+  labs(title = "Dynamic Geopolitical Event Windows",
+       subtitle = "Russia-Ukraine (28 weeks), Israel-Iran & Venezuela (4 weeks)",
+       x = "Date", y = "Gasoline Price") +
+  theme_minimal()
+
+print(event_highlight_plot)
+```
+```{r}
+# ==========================================
+# 1. Zoom: Russia-Ukraine Shock (28-Week Window)
+# ==========================================
+# - 4weeks ~ + 28weeks
+shock1_zoom_data <- model_data %>% 
+  filter(date >= (shock1_date - weeks(4)) & date <= (shock1_date + weeks(28)))
+
+shock1_forecast_plot <- calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = shock1_zoom_data,
+    actual_data = model_data,
+    keep_data   = TRUE
+  ) %>%
+  plot_modeltime_forecast(
+    .title = "Local Event Forecast: Russia-Ukraine Shock (28-Week Window)",
+    .interactive = TRUE, 
+    .legend_max_width = 25
+  )
+
+print(shock1_forecast_plot)
+
+# ==========================================
+# 2. Zoom: Israel-Iran Shock (4-Week Window)
+# ==========================================
+# -4 weeks ~ +4 weeks
+shock2_zoom_data <- model_data %>% 
+  filter(date >= (shock2_date - weeks(4)) & date <= (shock2_date + weeks(4)))
+
+shock2_forecast_plot <- calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = shock2_zoom_data,
+    actual_data = model_data,
+    keep_data   = TRUE
+  ) %>%
+  plot_modeltime_forecast(
+    .title = "Local Event Forecast: Israel-Iran Shock (4-Week Window)",
+    .interactive = TRUE, 
+    .legend_max_width = 25
+  )
+
+print(shock2_forecast_plot)
+
+# ==========================================
+# 3. Zoom: Venezuela Intervention (4-Week Window)
+# ==========================================
+# -4 weeks ~ +4 weeks
+shock3_zoom_data <- model_data %>% 
+  filter(date >= (shock3_date - weeks(4)) & date <= (shock3_date + weeks(4)))
+
+shock3_forecast_plot <- calibration_tbl %>%
+  modeltime_forecast(
+    new_data    = shock3_zoom_data,
+    actual_data = model_data,
+    keep_data   = TRUE
+  ) %>%
+  plot_modeltime_forecast(
+    .title = "Local Event Forecast: Venezuela Shock (4-Week Window)",
+    .interactive = TRUE, 
+    .legend_max_width = 25
+  )
+
+print(shock3_forecast_plot)
+```
+
 
 ## 7. Analysis of Model Robustness Across Geopolitical Shocks
 
-Our event study reveals a critical finding: **there is no single "best" model for all types of geopolitical stress.** The predictive power of each algorithm shifted significantly depending on the nature of the shock.
+Our local event study reveals a critical finding: there is no single "best" model for all types of geopolitical stress. The predictive power of each algorithm shifted significantly depending on the nature and duration of the shock.
 
-1.  **Shock 1 (Russia-Ukraine): The Power of Ensembles** The **ARIMA-Boost** model outperformed all others with a remarkably low MAE (0.0143). This suggests that for massive, sudden price spikes, combining traditional statistical methods (ARIMA) with machine learning (XGBoost) is the most effective way to capture both the trend and the sudden residual volatility.
+1.  **Shock 1 (Russia-Ukraine)**: The Power of Ensembles The ARIMA(1,1,0)(0,0,1)\[13\] w/ XGBoost Errors model outperformed all others with a remarkably low MAE of 0.0109. This suggests that for massive, sudden price spikes and structural shifts in global supply chains, combining traditional statistical methods (to capture the baseline trend) with machine learning (XGBoost, to capture sudden, non-linear residual volatility) is the most effective forecasting strategy.
 
-2.  **Shock 2 (Israel-Iran): Neural Network Superiority** During the mid-2025 volatility, the **NNAR (Neural Network Auto-Regression)** model took the lead (MAE: 0.0201). This indicates that the price fluctuations during this period had complex, non-linear patterns that standard linear models struggled to identify, but which the neural network was able to learn through its hidden layers.
+2.  **Shock 2 (Israel-Iran):** Dynamic Regression Superiority During the mid-2025 volatility, the Regression with ARIMA(1,1,0) Errors model took the lead (MAE: 0.0188), closely followed by the NNAR model (MAE: 0.0202). This indicates that the Middle Eastern conflict functioned primarily as a risk premium shock closely tied to external factors. The dynamic regression framework successfully handled this by using external regressors (like WTI or dummy variables) to absorb the immediate shock, while relying on the ARIMA structure to model the decaying autocorrelation of the panic.
 
-3.  **Shock 3 (Venezuela Intervention): Robustness to Structural Breaks** The most recent shock in early 2026 proved to be the most challenging for all models, as evidenced by the higher MAE scores across the board. However, **Prophet with Regressors** emerged as the winner (MAE: 0.1107). Prophet’s design—which is specifically built to handle trend changepoints and outliers—made it the most resilient model during this latest period of uncertainty.
+3.  **Shock 3 (Venezuela Intervention)**: Robustness to Structural Breaks The most recent shock in early 2026 proved to be the most challenging for almost all models, as evidenced by the generally higher MAE and RMSE scores across the board. However, Prophet w/ Regressors emerged as the clear winner (MAE: 0.1047). Prophet’s internal architecture—which is specifically designed to handle sudden trend changepoints and massive outliers—made it the most resilient framework during this latest period of severe market uncertainty, whereas traditional models struggled to adjust their baselines quickly enough.
 
 ## 8. Conclusion for Policy Makers
 
