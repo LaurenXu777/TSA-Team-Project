@@ -9,6 +9,9 @@ output:
     toc_float: true
     theme: flatly
     code_folding: show
+  pdf_document:
+    toc: true
+    toc_depth: '3'
 ---
 
 ```{r setup, include=FALSE}
