@@ -305,7 +305,7 @@ Comparing automated results reveals a well-known paradox in high-frequency forec
 
 This paradox highlights a core limitation of univariate ARIMA/SARIMA frameworks for high-frequency, shock-driven data — motivating the transition to multivariate machine learning approaches.
 
-### 4.5 Traditional ARIMAX Cross-Validation (`forecast` package)
+### 4.5 Approach 3: ARIMAX Cross-Validation (`forecast` package)
 
 As a methodological cross-check before our full modeltime pipeline, we fit the traditional ARIMAX approach using the `forecast` package directly. This uses bounded shock window dummies (1 only *during* the shock, 0 otherwise) rather than permanent step-change dummies, which is more appropriate for classical ARIMA residual regression. We use a fixed 20-observation hold-out for comparability.
 
@@ -754,7 +754,7 @@ For massive, sustained supply disruptions involving global commodity repricing, 
 The **ARIMAX** model (Regression with ARIMA errors) led performance, closely followed by NNAR. The conflict functioned primarily as a short-duration risk premium shock: the external regressor framework absorbed the signal without requiring nonlinear residual correction. The traditional ARIMAX in Section 4.5 confirmed the shock dummy coefficient is small (~-0.033), suggesting bounded-window shocks have modest but directionally consistent effects.
 
 **Shock 3 — Iran Escalation Feb 2026 (5-week structural shift):**
-As the most recent shock, this event poses the greatest forecasting challenge — models had limited prior data on this regime. **Prophet** performed best here, likely because its flexible trend changepoint detection adapts more quickly to sudden level shifts than ARIMA-based approaches.
+As the most recent shock occurring at the very end of our test period, this event posed the greatest forecasting challenge, as the models had limited prior data on this new volatility regime. The **NNAR (Neural Network Auto-Regression)** model emerged as the top performer (MAE: 0.2030), outperforming the Prophet model (MAE: 0.2647) which remained a strong runner-up due to its flexible changepoint detection. This indicates that the highly complex, non-linear price fluctuations caused by this sudden geopolitical escalation were best captured by the neural network's hidden layers.
 
 **Key takeaway:** Shock-type matters as much as model choice. Long-duration structural breaks favor hybrid ensemble approaches; short-term risk premium spikes favor dynamic regression; novel near-term breaks favor flexible trend models.
 
@@ -774,13 +774,13 @@ This analysis demonstrates that U.S. gasoline prices respond to geopolitical sho
 
 4. For **short-term risk premium events** (Israel-Iran June 2025), ARIMAX with bounded shock dummies captures the signal efficiently and is more interpretable for policy communication.
 
-5. For **novel near-term shocks** (Iran Escalation 2026), Prophet's changepoint flexibility provides a marginal advantage, though all models face elevated uncertainty when events are recent and training data is limited.
+5. For **novel near-term shocks** (Iran Escalation 2026), NNAR's ability to map chaotic, short-term dependencies without being strictly bound by historical linear constraints provides a marginal advantage, though all models face elevated uncertainty when events are recent and training data is limited.
 
 **Policy recommendation:**
 We recommend a **dynamic, shock-type-matched forecasting framework**:
 - Deploy **ARIMA-Boost** for long-horizon monitoring during sustained geopolitical disruptions.
 - Deploy **ARIMAX** for near-term, event-specific windows where the shock is clearly bounded.
-- Deploy **Prophet** for real-time monitoring of emerging events where historical analogues are limited.
+- Deploy **NNAR** for real-time monitoring of emerging events where historical analogues are limited.
 
 All models should be retrained weekly as new EIA data becomes available, with shock dummies activated the week an event is confirmed and deactivated when market prices stabilize.
 
