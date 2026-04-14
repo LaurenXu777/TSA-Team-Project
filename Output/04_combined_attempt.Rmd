@@ -336,7 +336,7 @@ test_shk   <- tail(oil_price_ts$shock_all, h)
 
 # ---- Baseline: Naive ----
 fit_naive <- naive(train, h = h)
-acc_naive <- accuracy(fit_naive, test)
+acc_naive <- forecast::accuracy(fit_naive, test)
 cat("Naive — Test RMSE:", round(acc_naive["Test set", "RMSE"], 4),
     " | Test MAPE:", round(acc_naive["Test set", "MAPE"], 2), "%\n")
 
@@ -344,7 +344,7 @@ cat("Naive — Test RMSE:", round(acc_naive["Test set", "RMSE"], 4),
 fit_arima <- auto.arima(train)
 print(summary(fit_arima))
 fc_arima  <- forecast(fit_arima, h = h)
-acc_arima <- accuracy(fc_arima, test)
+acc_arima <- forecast::accuracy(fc_arima, test)
 cat("ARIMA — Test RMSE:", round(acc_arima["Test set", "RMSE"], 4), "\n")
 
 # ---- ARIMAX: With gas stocks + combined shock dummy ----
