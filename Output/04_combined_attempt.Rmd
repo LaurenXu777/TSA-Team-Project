@@ -176,7 +176,7 @@ ggplot(clean_data, aes(x = date, y = gas_price)) +
 
 ---
 
-## 4. Traditional ARIMA and SARIMA
+## 4. Traditional ARIMA, SARIMA, and ARIMAX
 
 We analyze the univariate gasoline price series using two approaches: a classical ARIMA on deseasonalized data, and a SARIMA on the original data.
 
